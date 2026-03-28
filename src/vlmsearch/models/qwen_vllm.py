@@ -3,7 +3,7 @@ import os
 import base64
 from PIL import Image
 from io import BytesIO
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Sequence
 import json
 import logging
 
@@ -119,7 +119,9 @@ class Qwen_VLLM():
         system_prompt: str,
         previous_thoughts: List[Tuple[str, Optional[Image.Image]]],
         force_final: bool = False,
-        no_sample: bool = False
+        no_sample: bool = False,
+        prior_state_images: Optional[Sequence[Image.Image]] = None,
+        **kwargs,
     ) -> str:
         """
         Generate a *single* piece of text from the model. 
@@ -176,15 +178,37 @@ class Qwen_VLLM():
                     # Convert the image to base64
                     base64_string = self._encode_image(maybe_image)
                     if thought_idx == 0:
+                        first_user_content: list = []
+                        priors = list(prior_state_images) if prior_state_images else []
+                        total_views = len(priors) + 1
+                        for i, pim in enumerate(priors):
+                            pb = self._encode_image(pim)
+                            first_user_content.append(
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"{pb}"},
+                                }
+                            )
+                            first_user_content.append(
+                                {
+                                    "type": "text",
+                                    "text": (
+                                        f"Earlier real screenshot {i + 1} of {total_views} "
+                                        f"from the same session (before the current page).\n"
+                                    ),
+                                }
+                            )
+                        first_user_content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"{base64_string}"},
+                            }
+                        )
+                        first_user_content.append({"type": "text", "text": text_str})
                         messages.append(
                             {
                                 "role": "user",
-                                "content": [
-                                    {"type": "image_url", "image_url": {
-                                        "url": f"{base64_string}"}
-                                    },
-                                    {"type": "text", "text": text_str}
-                                ]
+                                "content": first_user_content,
                             }
                         )
                     else:

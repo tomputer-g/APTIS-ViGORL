@@ -3,7 +3,7 @@ import os
 import base64
 from PIL import Image
 from io import BytesIO
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Sequence
 import json
 client = AzureOpenAI(
     api_key = os.getenv("AZURE_OPENAI_KEY"),  
@@ -109,6 +109,8 @@ class GPT4o():
         system_prompt: str,
         previous_thoughts: List[Tuple[str, Optional[Image.Image]]],
         force_final: bool = False,
+        prior_state_images: Optional[Sequence[Image.Image]] = None,
+        **kwargs,
     ) -> str:
         """
         Generate a *single* piece of text from the model. 
@@ -156,9 +158,41 @@ class GPT4o():
 
         # We'll add a single 'user' turn containing all previous_thoughts
         if previous_thoughts:
+            priors = list(prior_state_images) if prior_state_images else []
+            total_views = len(priors) + 1
+            first_image_done = False
             # Accumulate the user content
             for text_str, maybe_image in previous_thoughts:
                 if maybe_image is not None:
+                    if not first_image_done:
+                        for i, pim in enumerate(priors):
+                            pb = self._encode_image(pim)
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": f"{pb}"},
+                                        }
+                                    ],
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": (
+                                                f"Earlier real screenshot {i + 1} of {total_views} "
+                                                f"from the same session (before the current page)."
+                                            ),
+                                        }
+                                    ],
+                                }
+                            )
+                        first_image_done = True
                     # Strip the <image> placeholder from text if needed
                     text_str = text_str.replace("<image>", "")
                     # Convert the image to base64

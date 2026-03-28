@@ -1,13 +1,13 @@
-"""Optional Set-of-Marks overlay and mild color augmentation for vlmsearch rollouts."""
+"""Optional Set-of-Marks overlay, resize helpers, and real prior-state images for vlmsearch."""
 
 from __future__ import annotations
 
 import json
-import random
+import os
 from typing import Any, List, Optional
 
 import ast
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 from qwen_vl_utils import fetch_image
 
@@ -24,6 +24,56 @@ def parse_som_bboxes(data: Any) -> List[dict]:
             return []
         return json.loads(s)
     return []
+
+
+def parse_previous_state_paths(data: Any) -> List[str]:
+    """JSON list of relative (to image_root) or absolute image paths, oldest → newest."""
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [str(p) for p in data]
+    if isinstance(data, str):
+        s = data.strip()
+        if not s:
+            return []
+        return [str(p) for p in json.loads(s)]
+    return []
+
+
+def resize_image_for_rollout(
+    input_image: Image.Image,
+    max_image_side: Optional[int],
+    max_pixels: Optional[int],
+) -> Image.Image:
+    """Same geometry as the main observation (no label scaling)."""
+    width, height = input_image.size
+    max_side = max(width, height)
+    if max_image_side is not None and max_side > max_image_side:
+        scale_factor = max_image_side / max_side
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        input_image = input_image.resize((new_width, new_height))
+    width, height = input_image.size
+    if max_pixels is not None and width * height > max_pixels:
+        input_image = fetch_image({"image": input_image, "max_pixels": max_pixels})
+    return input_image
+
+
+def load_previous_state_images(
+    relative_or_abs_paths: List[str],
+    image_root: str,
+    max_image_side: Optional[int],
+    max_pixels: Optional[int],
+) -> List[Image.Image]:
+    """Load real screenshots from disk; same resize as current state. No synthesis."""
+    out: List[Image.Image] = []
+    for p in relative_or_abs_paths:
+        full = p if os.path.isabs(p) else os.path.join(image_root, p)
+        if not os.path.isfile(full):
+            continue
+        im = Image.open(full).convert("RGB")
+        out.append(resize_image_for_rollout(im, max_image_side, max_pixels))
+    return out
 
 
 def apply_som_overlay(image: Image.Image, boxes: List[dict]) -> Image.Image:
@@ -56,26 +106,6 @@ def apply_som_overlay(image: Image.Image, boxes: List[dict]) -> Image.Image:
     return img
 
 
-def apply_mild_color_augmentation(
-    image: Image.Image, strength: float, seed: Optional[int] = None
-) -> Image.Image:
-    """
-    Non-geometric aug only (brightness / contrast / color). Safe for fixed (x,y) labels.
-    strength in [0, 1]; 0 disables.
-    """
-    if strength <= 0:
-        return image
-    rng = random.Random(seed)
-    img = image.convert("RGB")
-    b = 1.0 + (rng.random() * 2 - 1) * 0.12 * strength
-    c = 1.0 + (rng.random() * 2 - 1) * 0.12 * strength
-    col = 1.0 + (rng.random() * 2 - 1) * 0.08 * strength
-    img = ImageEnhance.Brightness(img).enhance(b)
-    img = ImageEnhance.Contrast(img).enhance(c)
-    img = ImageEnhance.Color(img).enhance(col)
-    return img
-
-
 def preprocess_rollout_image(
     input_image_path: str,
     true_answer: str,
@@ -85,14 +115,12 @@ def preprocess_rollout_image(
     judge_type: str,
     use_som: bool,
     som_bboxes: Any,
-    aug_strength: float,
-    aug_seed: Optional[int],
 ) -> tuple[Image.Image, str]:
     """
     Load image, apply max_image_side / max_pixels (scaling ground-truth for point judges),
-    then optional SoM and color augmentation.
+    then optional SoM on the current state only.
     """
-    input_image = Image.open(input_image_path)
+    input_image = Image.open(input_image_path).convert("RGB")
 
     width, height = input_image.size
     max_side = max(width, height)
@@ -136,10 +164,5 @@ def preprocess_rollout_image(
     boxes = parse_som_bboxes(som_bboxes) if use_som else []
     if use_som and boxes:
         input_image = apply_som_overlay(input_image, boxes)
-
-    if aug_strength > 0:
-        input_image = apply_mild_color_augmentation(
-            input_image, aug_strength, seed=aug_seed
-        )
 
     return input_image, true_answer

@@ -16,7 +16,11 @@ logger = logging.getLogger(__name__)
 from qwen_vl_utils import fetch_image
 from PIL import ImageDraw
 import json
-from vlmsearch.image_ops import preprocess_rollout_image
+from vlmsearch.image_ops import (
+    preprocess_rollout_image,
+    parse_previous_state_paths,
+    load_previous_state_images,
+)
 TOOL_RE   = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 def _parse_coordinate(text: str):
     """
@@ -151,7 +155,8 @@ class SinglePathRollouts:
         crop_size: int = 512,
         draw_dot: bool = True,
         use_som: bool = False,
-        aug_strength: float = 0.0,
+        image_root: str = "",
+        max_previous_state_images: int | None = None,
     ):
         """
         llm_wrapper: An instance of LLMWrapper for generation.
@@ -179,7 +184,9 @@ class SinglePathRollouts:
         self.crop_size = crop_size
         self.draw_dot = draw_dot
         self.use_som = use_som
-        self.aug_strength = aug_strength
+        self.image_root = image_root or ""
+        self.max_previous_state_images = max_previous_state_images
+        self._prior_state_images: List[Image.Image] = []
 
         print(f"Max pixels: {self.max_pixels}; Max image side: {self.max_image_side}")
 
@@ -190,7 +197,7 @@ class SinglePathRollouts:
         true_answer: str,
         worker_id: int = 0,
         som_bboxes=None,
-        aug_seed: int | None = None,
+        previous_state_images=None,
         ) -> str:
         """
         Main entry point for performing the tree search on a single prompt/data sample.
@@ -218,8 +225,18 @@ class SinglePathRollouts:
             judge_type=self.judge.judge_type,
             use_som=self.use_som,
             som_bboxes=som_bboxes,
-            aug_strength=self.aug_strength,
-            aug_seed=aug_seed,
+        )
+
+        paths = parse_previous_state_paths(previous_state_images)
+        if self.max_previous_state_images == 0:
+            paths = []
+        elif self.max_previous_state_images is not None and self.max_previous_state_images > 0:
+            paths = paths[-self.max_previous_state_images :]
+        self._prior_state_images = load_previous_state_images(
+            paths,
+            self.image_root,
+            self.max_image_side,
+            self.max_pixels,
         )
 
         scale_factor = 1.0
@@ -394,7 +411,8 @@ class SinglePathRollouts:
                 system_prompt=system_prompt,
                 previous_thoughts=previous_thoughts,
                 force_final=False,
-                no_sample=no_sample
+                no_sample=no_sample,
+                prior_state_images=self._prior_state_images,
             )
             if self.rollout_no_thinking:
                 leaf_node = TreeNode(thought_text=all_text, parent=current_node)
@@ -431,7 +449,8 @@ class SinglePathRollouts:
                     system_prompt=system_prompt,
                     previous_thoughts=previous_thoughts,
                     force_final=force_final,
-                    no_sample=no_sample
+                    no_sample=no_sample,
+                    prior_state_images=self._prior_state_images,
                 )
             logger.debug(f"Generated text at depth {depth}: {next_text}")
 

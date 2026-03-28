@@ -215,7 +215,9 @@ class Qwen2_5_VL(lmms):
         system_prompt: str,
         previous_thoughts: List[Tuple[str, Optional[Image.Image]]],
         force_final: bool = False,
-        no_sample: bool = False
+        no_sample: bool = False,
+        prior_state_images: Optional[List[Image.Image]] = None,
+        **kwargs,
     ) -> str:
         """
         Generate a *single* piece of text from the model. 
@@ -244,9 +246,31 @@ class Qwen2_5_VL(lmms):
         query_text = f"{system_prompt}\n\n{query_text}"
         query_image = query[1]
         previous_thoughts = previous_thoughts[1:]
+        priors = list(prior_state_images) if prior_state_images else []
+        total_views = len(priors) + 1
+        user_content = []
+        for i, pim in enumerate(priors):
+            user_content.append(
+                {
+                    "type": "image",
+                    "image": f"data:image/jpeg;base64,{self._encode_image(pim)}",
+                }
+            )
+            user_content.append(
+                {
+                    "type": "text",
+                    "text": (
+                        f"Earlier real screenshot {i + 1} of {total_views} "
+                        f"from the same session (before the current page).\n"
+                    ),
+                }
+            )
         base64_string = self._encode_image(query_image)
-
-        messages.append({"role": "user", "content": [{"type": "image", "image": f"data:image/jpeg;base64,{base64_string}"}, {"type": "text", "text": query_text}]})
+        user_content.append(
+            {"type": "image", "image": f"data:image/jpeg;base64,{base64_string}"}
+        )
+        user_content.append({"type": "text", "text": query_text})
+        messages.append({"role": "user", "content": user_content})
 
         # We'll add a single 'user' turn containing all previous_thoughts
         thought_text = ""

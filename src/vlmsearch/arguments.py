@@ -60,10 +60,10 @@ def get_args():
         help="Overlay numbered boxes from JSONL field som_bboxes after resize (pixel coords in final image).",
     )
     parser.add_argument(
-        "--aug_strength",
-        type=float,
-        default=0.0,
-        help="Mild color aug strength in [0,1]; 0 disables. Non-geometric only.",
+        "--max_previous_state_images",
+        type=int,
+        default=None,
+        help="Cap how many prior screenshots to attach from JSONL previous_state_images. None=all, 0=none.",
     )
 
     return parser.parse_args()

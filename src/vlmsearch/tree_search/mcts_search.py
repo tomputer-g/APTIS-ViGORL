@@ -9,7 +9,11 @@ import json
 from tqdm import tqdm
 import datetime
 
-from vlmsearch.image_ops import preprocess_rollout_image
+from vlmsearch.image_ops import (
+    preprocess_rollout_image,
+    parse_previous_state_paths,
+    load_previous_state_images,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +166,8 @@ class MonteCarloTreeSearch:
         max_image_side: int | None = None,
         max_pixels: int | None = None,
         use_som: bool = False,
-        aug_strength: float = 0.0,
+        image_root: str = "",
+        max_previous_state_images: int | None = None,
     ):
         """
         Args:
@@ -199,7 +204,9 @@ class MonteCarloTreeSearch:
         self.max_image_side = max_image_side
         self.max_pixels = max_pixels
         self.use_som = use_som
-        self.aug_strength = aug_strength
+        self.image_root = image_root or ""
+        self.max_previous_state_images = max_previous_state_images
+        self._prior_state_images: List[Image.Image] = []
 
     def search(
         self,
@@ -208,7 +215,7 @@ class MonteCarloTreeSearch:
         true_answer: str,
         worker_id: int = 0,
         som_bboxes=None,
-        aug_seed: int | None = None,
+        previous_state_images=None,
     ) -> List[dict]:
         """
         Main entry point for performing the MCTS search on a single prompt/data sample.
@@ -237,8 +244,18 @@ class MonteCarloTreeSearch:
             judge_type=self.judge.judge_type,
             use_som=self.use_som,
             som_bboxes=som_bboxes,
-            aug_strength=self.aug_strength,
-            aug_seed=aug_seed,
+        )
+
+        paths = parse_previous_state_paths(previous_state_images)
+        if self.max_previous_state_images == 0:
+            paths = []
+        elif self.max_previous_state_images is not None and self.max_previous_state_images > 0:
+            paths = paths[-self.max_previous_state_images :]
+        self._prior_state_images = load_previous_state_images(
+            paths,
+            self.image_root,
+            self.max_image_side,
+            self.max_pixels,
         )
 
         # Create the root node
@@ -375,7 +392,8 @@ class MonteCarloTreeSearch:
             next_text = self.llm.generate_single_thought(
                 system_prompt=system_prompt,
                 previous_thoughts=previous_thoughts,
-                force_final=force_final
+                force_final=force_final,
+                prior_state_images=self._prior_state_images,
             )
             logger.debug(f"EXPANSION child {i+1}/{num_children}: generated text => {next_text}")
 
@@ -469,7 +487,8 @@ class MonteCarloTreeSearch:
             next_text = self.llm.generate_single_thought(
                 system_prompt=system_prompt,
                 previous_thoughts=previous_thoughts,
-                force_final=force_final
+                force_final=force_final,
+                prior_state_images=self._prior_state_images,
             )
 
             logger.debug(f"ROLLOUT: generated text => {next_text}")
