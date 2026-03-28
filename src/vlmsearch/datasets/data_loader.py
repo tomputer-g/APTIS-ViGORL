@@ -17,7 +17,7 @@ class GeneralDataset(datasets.GeneratorBasedBuilder):
     and returns a huggingface Dataset object.
     """
 
-    VERSION = datasets.Version("1.0.0")
+    VERSION = datasets.Version("1.1.0")
 
     BUILDER_CONFIG_CLASS = GeneralConfig
 
@@ -46,6 +46,7 @@ class GeneralDataset(datasets.GeneratorBasedBuilder):
                     "model": datasets.Value("string"),
                     "input_query": datasets.Value("string"),
                     "true_answer": datasets.Value("string"),
+                    "som_bboxes": datasets.Value("string"),
                 }
             ),
             supervised_keys=None,
@@ -69,6 +70,7 @@ class GeneralDataset(datasets.GeneratorBasedBuilder):
             "model",
             "input_query",
             "true_answer",
+            "som_bboxes",
         }
         example_idx = 0
         for filepath in filepaths:
@@ -85,6 +87,10 @@ class GeneralDataset(datasets.GeneratorBasedBuilder):
                         record["image"] = os.path.join(self.config.image_root, record["image"])
                     if "model" not in record:
                         record["model"] = "None"
+                    if "som_bboxes" not in record:
+                        record["som_bboxes"] = "[]"
+                    elif isinstance(record["som_bboxes"], list):
+                        record["som_bboxes"] = json.dumps(record["som_bboxes"])
                     for key in list(record.keys()):
                         if key not in valid_features:
                             del record[key]

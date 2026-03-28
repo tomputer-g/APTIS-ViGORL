@@ -89,6 +89,8 @@ def init_model_and_judge(args):
             crop_size=args.crop_size,
             draw_dot=args.draw_dot,
             first_rollout_no_sample=args.first_rollout_no_sample,
+            use_som=args.use_som,
+            aug_strength=args.aug_strength,
         )
     elif args.search_method == "mcts":
         tree_searcher = MonteCarloTreeSearch(
@@ -110,6 +112,10 @@ def init_model_and_judge(args):
             thought_token_end=args.thought_token_end,
             final_token_begin=args.final_token_begin,
             final_token_end=args.final_token_end,
+            max_image_side=args.max_image_side,
+            max_pixels=args.max_pixels,
+            use_som=args.use_som,
+            aug_strength=args.aug_strength,
         )
     else:
         raise ValueError(f"Invalid search method: {args.search_method}")
@@ -152,6 +158,7 @@ def process_samples(
 
             sample["input_query"] = sample["conversations"]["value"][0]
             sample["true_answer"] = sample["conversations"]["value"][1]
+            aug_seed = (hash(sample["id"]) ^ (worker_id * 1_000_003)) & 0x7FFFFFFF
 
             # Execute search with timeout
             with ThreadPoolExecutor(max_workers=1) as executor:
@@ -161,6 +168,8 @@ def process_samples(
                     input_image_path=sample["image"],
                     true_answer=sample["true_answer"],
                     worker_id=worker_id,
+                    som_bboxes=sample.get("som_bboxes", "[]"),
+                    aug_seed=aug_seed,
                 )
                 
                 try:
@@ -340,12 +349,16 @@ def main():
         for idx, sample in enumerate(tqdm(dataset_shard, desc="Processing dataset_shard", disable=not accelerator.is_main_process)):
             sample["input_query"] = sample["conversations"]["value"][0]
             sample["true_answer"] = sample["conversations"]["value"][1]
+            aug_seed = (hash(sample["id"]) ^ (accelerator.process_index * 1_000_003)) & 0x7FFFFFFF
 
             try:
                 search_outputs = tree_searcher.search(
                     input_query=sample["input_query"],
                     input_image_path=sample["image"],
                     true_answer=sample["true_answer"],
+                    worker_id=accelerator.process_index,
+                    som_bboxes=sample.get("som_bboxes", "[]"),
+                    aug_seed=aug_seed,
                 )
             except openai.OpenAIError as e:
                 logging.error(f"OpenAIError: {e}")

@@ -53,5 +53,17 @@ def get_args():
     parser.add_argument("--load_proposal_folder", type=str, default=None)
     parser.add_argument("--give_crop_feedback", type=bool, default=False)
     parser.add_argument("--repetition_penalty", type=float, default=1.05)
-    
+    parser.add_argument(
+        "--use_som",
+        action="store_true",
+        default=False,
+        help="Overlay numbered boxes from JSONL field som_bboxes after resize (pixel coords in final image).",
+    )
+    parser.add_argument(
+        "--aug_strength",
+        type=float,
+        default=0.0,
+        help="Mild color aug strength in [0,1]; 0 disables. Non-geometric only.",
+    )
+
     return parser.parse_args()

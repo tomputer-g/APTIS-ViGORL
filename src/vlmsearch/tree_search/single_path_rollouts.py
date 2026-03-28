@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 from qwen_vl_utils import fetch_image
 from PIL import ImageDraw
 import json
+from vlmsearch.image_ops import preprocess_rollout_image
 TOOL_RE   = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
 def _parse_coordinate(text: str):
     """
@@ -149,6 +150,8 @@ class SinglePathRollouts:
         crop_offset: int = 50,
         crop_size: int = 512,
         draw_dot: bool = True,
+        use_som: bool = False,
+        aug_strength: float = 0.0,
     ):
         """
         llm_wrapper: An instance of LLMWrapper for generation.
@@ -175,6 +178,8 @@ class SinglePathRollouts:
         self.crop_offset = crop_offset
         self.crop_size = crop_size
         self.draw_dot = draw_dot
+        self.use_som = use_som
+        self.aug_strength = aug_strength
 
         print(f"Max pixels: {self.max_pixels}; Max image side: {self.max_image_side}")
 
@@ -183,7 +188,9 @@ class SinglePathRollouts:
         input_query: str, 
         input_image_path: str,
         true_answer: str,
-        worker_id: int,
+        worker_id: int = 0,
+        som_bboxes=None,
+        aug_seed: int | None = None,
         ) -> str:
         """
         Main entry point for performing the tree search on a single prompt/data sample.
@@ -203,43 +210,19 @@ class SinglePathRollouts:
         else:
             system_prompt = self.system_prompt
 
-        input_image = Image.open(input_image_path)
+        input_image, true_answer = preprocess_rollout_image(
+            input_image_path,
+            true_answer,
+            max_image_side=self.max_image_side,
+            max_pixels=self.max_pixels,
+            judge_type=self.judge.judge_type,
+            use_som=self.use_som,
+            som_bboxes=som_bboxes,
+            aug_strength=self.aug_strength,
+            aug_seed=aug_seed,
+        )
 
-        width, height = input_image.size
-        max_side = max(width, height)
         scale_factor = 1.0
-        if self.max_image_side is not None and max_side > self.max_image_side:
-            scale_factor = self.max_image_side / max_side
-            new_width = int(width * scale_factor)
-            new_height = int(height * scale_factor)
-            input_image = input_image.resize((new_width, new_height))
-            if self.judge.judge_type == "point_matching":
-                gt_point = tuple(ast.literal_eval(true_answer))
-                gt_point = tuple(int(x * scale_factor) for x in gt_point)
-                true_answer = str(gt_point)
-            elif self.judge.judge_type == "point_in_bbox":
-                gt_bbox = tuple(ast.literal_eval(true_answer))
-                gt_bbox = tuple(int(x * scale_factor) for x in gt_bbox)
-                true_answer = str(gt_bbox)
-
-        width, height = input_image.size
-        scale_factor = 1.0
-        if self.max_pixels is not None and width * height > self.max_pixels:
-
-            input_image = fetch_image({"image": input_image, "max_pixels": self.max_pixels})
-
-            # get scale factor
-            scale_factor_width = input_image.size[0] / width
-            scale_factor_height = input_image.size[1] / height
-            scale_factor = scale_factor_width
-            if self.judge.judge_type == "point_matching":
-                gt_point = tuple(ast.literal_eval(true_answer))
-                gt_point = (int(gt_point[0] * scale_factor_width), int(gt_point[1] * scale_factor_height))
-                true_answer = str(gt_point)
-            elif self.judge.judge_type == "point_in_bbox":
-                gt_bbox = tuple(ast.literal_eval(true_answer))
-                gt_bbox = (int(gt_bbox[0] * scale_factor_width), int(gt_bbox[1] * scale_factor_height), int(gt_bbox[2] * scale_factor_width), int(gt_bbox[3] * scale_factor_height))
-                true_answer = str(gt_bbox)
 
         # Create root node
         root = TreeNode(

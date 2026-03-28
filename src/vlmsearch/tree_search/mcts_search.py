@@ -9,7 +9,10 @@ import json
 from tqdm import tqdm
 import datetime
 
+from vlmsearch.image_ops import preprocess_rollout_image
+
 logger = logging.getLogger(__name__)
+
 
 def serialize_tree(root: TreeNode) -> None:
     """
@@ -156,6 +159,10 @@ class MonteCarloTreeSearch:
         final_token_begin: str = "<answer>",
         final_token_end: str = "</answer>",
         avoid_repeat_coords: bool = True,
+        max_image_side: int | None = None,
+        max_pixels: int | None = None,
+        use_som: bool = False,
+        aug_strength: float = 0.0,
     ):
         """
         Args:
@@ -189,13 +196,19 @@ class MonteCarloTreeSearch:
         self.final_token_end = final_token_end
 
         self.avoid_repeat_coords = avoid_repeat_coords
+        self.max_image_side = max_image_side
+        self.max_pixels = max_pixels
+        self.use_som = use_som
+        self.aug_strength = aug_strength
 
     def search(
         self,
         input_query: str,
         input_image_path: str,
         true_answer: str,
-        worker_id: int = 0
+        worker_id: int = 0,
+        som_bboxes=None,
+        aug_seed: int | None = None,
     ) -> List[dict]:
         """
         Main entry point for performing the MCTS search on a single prompt/data sample.
@@ -216,8 +229,17 @@ class MonteCarloTreeSearch:
         else:
             system_prompt = self.system_prompt
 
-        # Open the image
-        input_image = Image.open(input_image_path)
+        input_image, true_answer = preprocess_rollout_image(
+            input_image_path,
+            true_answer,
+            max_image_side=self.max_image_side,
+            max_pixels=self.max_pixels,
+            judge_type=self.judge.judge_type,
+            use_som=self.use_som,
+            som_bboxes=som_bboxes,
+            aug_strength=self.aug_strength,
+            aug_seed=aug_seed,
+        )
 
         # Create the root node
         root = TreeNode(
